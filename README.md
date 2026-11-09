@@ -63,6 +63,10 @@ Open <http://localhost:18000>, then configure your provider and model in Setting
 
 </details>
 
+## One-Click Deploy
+
+[![Deploy on RepoCloud](https://d16t0pc4846x52.cloudfront.net/deploylobe.svg)](https://repocloud.io/details/DiceFrame/)
+
 ## Documentation
 
 | Topic | English | 中文 |
