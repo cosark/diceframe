@@ -1273,11 +1273,60 @@ def _referenced_player_ids(log: list[Any]) -> set[str]:
     return referenced
 
 
+def _seat_is_evidenced(payload: Mapping[str, Any], uid: str) -> bool:
+    """Any persisted trace that the seat belonged to a real participant.
+
+    The log window is not enough: the codec keeps only ``log[-100:]``, so a
+    real player who simply did not speak inside that window lost the seat on
+    the next load — and every seat-scoped entry point (action, Luck, Push)
+    then answered 403 for them. A usable seat credential, a recorded seat
+    action, or a character are independent evidence, so any of them keeps the
+    seat. Unreadable module slots also count as evidence: this cleanup must
+    never delete a player it cannot judge.
+    """
+    modules = payload.get("modules")
+    if modules is not None and not isinstance(modules, dict):
+        return True
+    modules = modules if isinstance(modules, dict) else {}
+    access = modules.get(room_access.MODULE_NAME)
+    if access is not None and not isinstance(access, dict):
+        return True
+    if isinstance(access, dict):
+        credentials = access.get("seat_credentials")
+        if credentials is not None and not isinstance(credentials, dict):
+            return True
+        if isinstance(credentials, dict) and uid in credentials:
+            return True
+    activity = modules.get(seat_activity.MODULE_NAME)
+    if activity is not None and not isinstance(activity, dict):
+        return True
+    if isinstance(activity, dict):
+        acted = activity.get("acted_seats")
+        if acted is not None and not isinstance(acted, list):
+            return True
+        if isinstance(acted, list) and uid in acted:
+            return True
+    return False
+
+
+def _player_has_a_character(player: Any) -> bool:
+    if not isinstance(player, dict):
+        return False
+    if str(player.get("character_name") or "").strip():
+        return True
+    sheet = player.get("character_sheet")
+    return isinstance(sheet, dict) and bool(sheet)
+
+
 def normalize_game_state_payload(data: Mapping[str, Any]) -> dict[str, Any]:
     """Return a normalized copy of a persisted game-state payload.
 
-    Ghost-player cleanup intentionally requires historical evidence. Waiting
-    rooms and unplayed multiplayer sessions therefore keep every participant.
+    Ghost-player cleanup requires positive evidence of absence: a seat is only
+    dropped when the retained history does not mention it *and* nothing else
+    remembers it (no seat credential, no recorded seat action, no character).
+    A ready or away mark is not evidence on its own; those flags are cleaned up
+    together with the seat. Waiting rooms and unplayed multiplayer sessions
+    therefore keep every participant.
     """
     payload = migrate_game_state_payload(data)
     from src.migrations.run_story import preserves_frozen_roster
@@ -1290,7 +1339,15 @@ def normalize_game_state_payload(data: Mapping[str, Any]) -> dict[str, Any]:
     referenced = _referenced_player_ids(log)
     if not referenced:
         return payload
-    ghost_ids = sorted(uid for uid in players if uid not in referenced)
+    ghost_ids = sorted(
+        uid
+        for uid, player in players.items()
+        if (
+            uid not in referenced
+            and not _seat_is_evidenced(payload, uid)
+            and not _player_has_a_character(player)
+        )
+    )
     if not ghost_ids:
         return payload
     payload["players"] = {

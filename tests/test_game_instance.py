@@ -471,17 +471,24 @@ class TestGameInstance:
         assert restored.players["u1"]["character_name"] == "剑士"
         assert round_presentation.quick_actions(restored) == ["调查脚印", "询问守卫"]
 
-    async def test_from_dict_prunes_unreferenced_ghost_players(self):
+    async def test_from_dict_keeps_a_character_bearing_seat_outside_the_log_window(self):
+        """A quiet seat is not a ghost: the retained log is only the last 100 entries.
+
+        Regression for issue #714: this exact shape (joined, has a character,
+        marked ready, not yet inside the retained window) used to be deleted on
+        load, and every seat-scoped entry point then answered 403 for it.
+        """
+
         data = {
             "game_key": ["web", "jp_isekai", "bot"],
             "state": "active_action",
             "players": {
                 "web_user": {"character_name": "艾琳", "character_sheet": {"deceased": False}},
-                "ghost_user": {"character_name": "幽灵玩家", "character_sheet": {"deceased": False}},
+                "quiet_user": {"character_name": "幽灵玩家", "character_sheet": {"deceased": False}},
             },
-            "ready_players": ["web_user", "ghost_user"],
-            "action_queue": [{"user_id": "ghost_user", "text": "不该保留"}],
-            "pending_actions": [{"user_id": "ghost_user", "text": "也不该保留"}],
+            "ready_players": ["web_user", "quiet_user"],
+            "action_queue": [{"user_id": "quiet_user", "text": "等下一次判定"}],
+            "pending_actions": [{"user_id": "quiet_user", "text": "也不该丢"}],
             "log": [{
                 "round": 39,
                 "actions": [{"user_id": "web_user", "text": "继续训练"}],
@@ -493,6 +500,33 @@ class TestGameInstance:
         restored = GameInstance.from_dict(data)
 
         assert data == original
+        assert set(restored.players) == {"web_user", "quiet_user"}
+        assert restored.ready_players == {"web_user", "quiet_user"}
+        assert restored.action_queue == [{"user_id": "quiet_user", "text": "等下一次判定"}]
+        assert restored.pending_actions == [{"user_id": "quiet_user", "text": "也不该丢"}]
+
+    async def test_from_dict_prunes_unreferenced_shell_seats(self):
+        """A seat nothing remembers (no character, no evidence) is still removed."""
+
+        data = {
+            "game_key": ["web", "jp_isekai", "bot"],
+            "state": "active_action",
+            "players": {
+                "web_user": {"character_name": "艾琳", "character_sheet": {"deceased": False}},
+                "shell_user": {"control": {"mode": "ai", "revision": 1}},
+            },
+            "ready_players": ["web_user", "shell_user"],
+            "action_queue": [{"user_id": "shell_user", "text": "不该保留"}],
+            "pending_actions": [{"user_id": "shell_user", "text": "也不该保留"}],
+            "log": [{
+                "round": 39,
+                "actions": [{"user_id": "web_user", "text": "继续训练"}],
+                "pre_state_snapshot": {"web_user": {"hp": 46}},
+            }],
+        }
+
+        restored = GameInstance.from_dict(data)
+
         assert set(restored.players) == {"web_user"}
         assert restored.ready_players == {"web_user"}
         assert restored.action_queue == []
